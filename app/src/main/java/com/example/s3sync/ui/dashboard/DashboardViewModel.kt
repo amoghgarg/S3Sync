@@ -49,7 +49,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         initializeMonths()
-        refreshAll()
+        // refreshAll() // Removed to avoid automatic sync/verify on navigation
         observeWorkProgress()
     }
 

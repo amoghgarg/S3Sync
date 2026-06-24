@@ -81,12 +81,11 @@ class SyncWorker(
             }
 
             if (!remoteObjects.containsKey(s3Key)) {
-                setProgress(workDataOf(PROGRESS_ACTION to "Uploading: ${file.name}"))
                 s3ClientManager.uploadFileBasic(
                     config = config,
                     key = s3Key,
                     uri = file.uri,
-                    onActionUpdate = null // We manage progress here for consistency
+                    onActionUpdate = { action -> setProgress(workDataOf(PROGRESS_ACTION to action)) }
                 )
                 uploaded++
             } else {
@@ -143,6 +142,7 @@ class SyncWorker(
 
             if (localMd5Hex == remoteEtag) {
                 matched++
+                Logger.log(applicationContext, LogLevel.INFO, "Verified: ${file.name} - MD5 match (Local: $localMd5Hex, S3: $remoteEtag)")
             } else {
                 mismatched++
                 setProgress(workDataOf(PROGRESS_ACTION to "Mismatch: ${file.name}"))
