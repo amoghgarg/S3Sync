@@ -13,7 +13,8 @@ data class LocalMedia(
     val uri: android.net.Uri,
     val name: String,
     val size: Long,
-    val month: String
+    val month: String,
+    val dateTaken: Long
 )
 
 class S3Scanner(private val context: Context) {
@@ -34,7 +35,7 @@ class S3Scanner(private val context: Context) {
             imageProjection,
             null,
             null,
-            "${MediaStore.Images.Media.DATE_TAKEN} DESC"
+            "${MediaStore.Images.Media.DATE_TAKEN} ASC"
         )?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
@@ -51,7 +52,8 @@ class S3Scanner(private val context: Context) {
                         uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id),
                         name = cursor.getString(nameColumn),
                         size = cursor.getLong(sizeColumn),
-                        month = assetMonth
+                        month = assetMonth,
+                        dateTaken = dateTaken
                     ))
                 }
             }
@@ -69,7 +71,7 @@ class S3Scanner(private val context: Context) {
             videoProjection,
             null,
             null,
-            "${MediaStore.Video.Media.DATE_TAKEN} DESC"
+            "${MediaStore.Video.Media.DATE_TAKEN} ASC"
         )?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
@@ -86,12 +88,13 @@ class S3Scanner(private val context: Context) {
                         uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id),
                         name = cursor.getString(nameColumn),
                         size = cursor.getLong(sizeColumn),
-                        month = assetMonth
+                        month = assetMonth,
+                        dateTaken = dateTaken
                     ))
                 }
             }
         }
-        return assets
+        return assets.sortedBy { it.dateTaken }
     }
 
     suspend fun getS3FileCount(s3ClientManager: S3ClientManager, config: S3Config, month: String): Int {

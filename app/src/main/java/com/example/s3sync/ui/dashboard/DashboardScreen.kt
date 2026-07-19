@@ -59,7 +59,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                         style = MaterialTheme.typography.titleSmall
                     )
                     Text(
-                        text = if (config.bucketName.isEmpty()) "Bucket Not Configured" else "Bucket: ${config.bucketName}",
+                        text = if (config.bucketName.isEmpty()) "Bucket Not Configured" else "Bucket: ${config.bucketName}/${config.prefix}/",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -120,6 +120,7 @@ fun MonthCard(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text("Local Files: ${state.localCount}")
+            Text("DB Uploaded: ${state.dbCount}")
             Text("S3 File Count: ${state.s3Count}")
             
             if (state.currentFileAction != null) {

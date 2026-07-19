@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.example.s3sync.data.local.AppDatabase
 import com.example.s3sync.data.local.S3ConfigManager
+import com.example.s3sync.data.local.UploadedFile
 import com.example.s3sync.data.remote.S3ClientManager
 import com.example.s3sync.util.Logger
 import com.example.s3sync.util.LogLevel
@@ -27,6 +29,7 @@ class SyncWorker(
         val s3ConfigManager = S3ConfigManager(applicationContext)
         val s3ClientManager = S3ClientManager(applicationContext)
         val scanner = S3Scanner(applicationContext)
+        val database = AppDatabase.getDatabase(applicationContext)
 
         val config = s3ConfigManager.s3ConfigFlow.first()
         if (config.bucketName.isEmpty() || config.accessKey.isEmpty()) {
@@ -41,7 +44,7 @@ class SyncWorker(
 
         return try {
             if (mode == MODE_SYNC) {
-                performSync(month, config, s3ClientManager, scanner)
+                performSync(month, config, s3ClientManager, scanner, database)
             } else {
                 performVerify(month, config, s3ClientManager, scanner)
             }
@@ -59,10 +62,13 @@ class SyncWorker(
         month: String,
         config: com.example.s3sync.data.local.S3Config,
         s3ClientManager: S3ClientManager,
-        scanner: S3Scanner
+        scanner: S3Scanner,
+        database: AppDatabase
     ) {
+        val uploadedFileDao = database.uploadedFileDao()
+        
         setProgress(workDataOf(PROGRESS_ACTION to "Listing local files..."))
-        val localFiles = scanner.getLocalMediaForMonth(month)
+        val localFiles = scanner.getLocalMediaForMonth(month) // Already sorted ASC by dateTaken
         
         setProgress(workDataOf(PROGRESS_ACTION to "Fetching S3 list..."))
         val prefix = if (config.prefix.isEmpty()) "$month/" else "${config.prefix.trimEnd('/')}/$month/"
@@ -80,17 +86,64 @@ class SyncWorker(
                 "$root$monthPrefix${file.name}"
             }
 
-            if (!remoteObjects.containsKey(s3Key)) {
-                s3ClientManager.uploadFileBasic(
-                    config = config,
-                    key = s3Key,
-                    uri = file.uri,
-                    onActionUpdate = { action -> setProgress(workDataOf(PROGRESS_ACTION to action)) }
-                )
+            // Check database first
+            val dbFile = uploadedFileDao.getFileByS3Key(s3Key)
+            
+            // Algorithm: 
+            // 1. If in DB, skip.
+            // 2. If not in DB, check S3 (remoteObjects).
+            // 3. If in S3, add to DB and skip.
+            // 4. Otherwise, upload and add to DB.
+
+            if (dbFile != null) {
+                skipped++
+                // Log v for noise reduction if needed
+                continue
+            }
+
+            if (remoteObjects.containsKey(s3Key)) {
+                // Not in DB but on S3 - populate DB and skip
+                val inputStream: InputStream? = applicationContext.contentResolver.openInputStream(file.uri)
+                val md5Hex = inputStream?.use { s3ClientManager.calculateMD5Hex(it) } ?: ""
+                
+                uploadedFileDao.insert(UploadedFile(
+                    s3Key = s3Key,
+                    fileName = file.name,
+                    localUri = file.uri.toString(),
+                    fileSize = file.size,
+                    md5Hash = md5Hex,
+                    uploadTimestamp = System.currentTimeMillis(),
+                    dateTaken = file.dateTaken
+                ))
+                skipped++
+                Logger.log(applicationContext, LogLevel.INFO, "Found ${file.name} on S3, updated database.")
+                continue
+            }
+
+            // Not in DB and not on S3 - Upload
+            val result = s3ClientManager.uploadFile(
+                config = config,
+                key = s3Key,
+                uri = file.uri,
+                onActionUpdate = { action -> setProgress(workDataOf(PROGRESS_ACTION to action)) }
+            )
+
+            if (result == "UPLOADED") {
+                val inputStream: InputStream? = applicationContext.contentResolver.openInputStream(file.uri)
+                val md5Hex = inputStream?.use { s3ClientManager.calculateMD5Hex(it) } ?: ""
+
+                uploadedFileDao.insert(UploadedFile(
+                    s3Key = s3Key,
+                    fileName = file.name,
+                    localUri = file.uri.toString(),
+                    fileSize = file.size,
+                    md5Hash = md5Hex,
+                    uploadTimestamp = System.currentTimeMillis(),
+                    dateTaken = file.dateTaken
+                ))
                 uploaded++
             } else {
-                skipped++
-                setProgress(workDataOf(PROGRESS_ACTION to "Skipped: ${file.name}"))
+                // Failed - logged by S3ClientManager
             }
         }
         

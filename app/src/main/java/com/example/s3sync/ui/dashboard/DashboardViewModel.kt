@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.example.s3sync.data.local.AppDatabase
 import com.example.s3sync.data.local.S3Config
 import com.example.s3sync.data.local.S3ConfigManager
 import com.example.s3sync.data.remote.S3ClientManager
@@ -24,6 +25,7 @@ import java.util.Locale
 data class MonthState(
     val monthKey: String,
     val s3Count: Int = 0,
+    val dbCount: Int = 0,
     val localCount: Int = 0,
     val lastUpdated: Long = 0L,
     val isSyncing: Boolean = false,
@@ -36,6 +38,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val s3ConfigManager = S3ConfigManager(application)
     private val scanner = S3Scanner(application)
     private val workManager = WorkManager.getInstance(application)
+    private val database = AppDatabase.getDatabase(application)
+    private val uploadedFileDao = database.uploadedFileDao()
 
     private val _monthStates = MutableStateFlow<Map<String, MonthState>>(emptyMap())
     val monthStates = _monthStates.asStateFlow()
@@ -59,10 +63,14 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         val months = mutableMapOf<String, MonthState>()
         for (i in 0..5) {
             val key = monthFormat.format(calendar.time)
-            months[key] = MonthState(
-                monthKey = key,
-                localCount = scanner.getLocalMediaForMonth(key).size
-            )
+            viewModelScope.launch {
+                val dbUploaded = uploadedFileDao.getCountForMonth(key)
+                updateMonthState(key) { it.copy(
+                    localCount = scanner.getLocalMediaForMonth(key).size,
+                    dbCount = dbUploaded
+                )}
+            }
+            months[key] = MonthState(monthKey = key)
             calendar.add(Calendar.MONTH, -1)
         }
         _monthStates.value = months
@@ -117,8 +125,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             updateMonthState(month) { it.copy(isSyncing = true, error = null) }
             try {
                 val count = scanner.getS3FileCount(s3ClientManager, config, month)
+                val dbUploaded = uploadedFileDao.getCountForMonth(month)
                 updateMonthState(month) { it.copy(
                     s3Count = count,
+                    dbCount = dbUploaded,
                     lastUpdated = System.currentTimeMillis(),
                     isSyncing = false
                 )}
